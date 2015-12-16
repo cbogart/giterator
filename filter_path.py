@@ -19,4 +19,4 @@ for line in sys.stdin:
         if len(haz) > 0:
             print json.dumps(ch)
     except Exception, e:
-        print "========>Err", line, e
+        sys.stderr.write( "========>Err"+ str(line) + str(e))

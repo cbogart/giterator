@@ -1,1 +1,1 @@
-python scan.py 2015-04-01 2015-09-30 | python filter_path.py payload.issue | python paths.py created_at payload.issue.title payload.issue.body payload.issue.number repo.name | python json2csv.py > issue_titles09.csv
+python scan.py 2015-07-21 2015-09-30 | python filter_path.py payload.issue | python paths.py created_at payload.issue.title payload.issue.body payload.issue.number repo.name | python json2csv.py > issue_titles09a.csv

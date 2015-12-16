@@ -9,6 +9,7 @@ import csv
 import read_ga
 import git_comment_conventions
 from dateutil.relativedelta import relativedelta
+import dotgraph
 
 connection = mysql.connector.connect(
     host= 'localhost',
@@ -65,6 +66,7 @@ def get_pull_request_history(owner, project, pr, prid):
         cur.close();
 
     return result;
+
 
 def get_pull_request_commit_comments(owner, project, pr, prid): 
     result = []
@@ -142,7 +144,7 @@ def get_issue_events(owner, project, issue, issue_id):
                           "title":row["action_specific"],
                           "action":row["action"],
                           "provenance":"ghtorrent",
-                          "text": row["ext_ref_id"]});
+                          "text": ""});
 
     except mysql.connector.errors.DataError, de:
         print "Caught error ", de
@@ -170,6 +172,92 @@ def get_pr_related_hour_ga(owner, project, issue, prid):
         cur.close()
 
     return result
+
+def get_inbound_issue_title_references(owner, project, issue, issue_id):
+    result = []
+    try:
+        cur = connection.cursor(dictionary=True);
+        cur.execute("""select title, body, issues.created_at, login, from_full_name, from_issue_num 
+                from issue_crossref left join issue_titles
+                    on from_issue_id=issue_titles.issue_id 
+                left join issues on issues.id=from_issue_id
+                left join users on users.id=issues.reporter_id
+                where to_issue_id=%s and from_comment_id = 0 and from_pr_comment_id = 0""", (issue_id,))
+        rows = cur.fetchall()
+        for row in rows:
+            result.append({"rectype":"issue_crossref", 
+                           "issueid":issue, 
+                           "project_owner":owner, 
+                           "project_name":project, 
+                           "actor":row["login"], 
+                           "time":fixtime(row["created_at"]),
+                           "title":"Referenced in title or body of issue " + \
+                                   row["from_full_name"] + "#" + str(row["from_issue_num"]),
+                           "action":"write",
+                           "provenance":"issue_crossref",
+                           "text": row["title"] + "\n\n" + row["body"]});
+    finally:
+        cur.close()
+
+    return result
+
+def get_inbound_issue_comment_references(owner, project, issue, issue_id):
+    result = []
+    try:
+        cur = connection.cursor(dictionary=True);
+        cur.execute("""select body, issue_comments.created_at, login, from_full_name, from_issue_num 
+                from issue_crossref left join issue_comments 
+                    on from_issue_id=issue_comments.issue_id 
+                    and from_comment_id=issue_comments.comment_id
+                left join comments on issue_crossref.from_comment_id=comments.comment_id  
+                left join users on users.id=issue_comments.user_id
+                where to_issue_id=%s and from_comment_id != 0""", (issue_id,))
+        rows = cur.fetchall()
+        for row in rows:
+            result.append({"rectype":"issue_crossref", 
+                           "issueid":issue, 
+                           "project_owner":owner, 
+                           "project_name":project, 
+                           "actor":row["login"], 
+                           "time":fixtime(row["created_at"]),
+                           "title":"Referenced in comment in issue " + \
+                                   row["from_full_name"] + "#" + str(row["from_issue_num"]),
+                           "action":"write",
+                           "provenance":"issue_crossref",
+                           "text": row["body"]});
+    finally:
+        cur.close()
+
+    return result
+
+def get_inbound_pull_request_references(owner, project, issue, issue_id):
+    result = []
+    try:
+        cur = connection.cursor(dictionary=True);
+        cur.execute("""select body, pull_request_comments.created_at, login, from_full_name, from_issue_num 
+                from issue_crossref left join pull_request_comments
+                    on from_pr_id=pull_request_comments.pull_request_id 
+                    and from_pr_comment_id=pull_request_comments.comment_id
+                left join users on users.id=pull_request_comments.user_id
+                where to_issue_id=%s and from_issue_id=0""", (issue_id,))
+        rows = cur.fetchall()
+        for row in rows:
+            result.append({"rectype":"pull_request_crossref", 
+                           "issueid":issue, 
+                           "project_owner":owner, 
+                           "project_name":project, 
+                           "actor":row["login"], 
+                           "time":fixtime(row["created_at"]),
+                           "title":"Referenced in code review comment in pull request " + \
+                                   row["from_full_name"] + "#" + str(row["from_issue_num"]),
+                           "action":"write",
+                           "provenance":"issue_crossref",
+                           "text": row["body"]});
+    finally:
+        cur.close()
+
+    return result
+
 
 def get_issue_related_hour_ga(owner, project, issue, issue_id):
     result = []
@@ -427,16 +515,15 @@ module.exports.list_issues = function(owner, project) {
 
 """
 
-def pp_issue(owner, project, issue): return owner + "/" + project + "#" + issue
-def pp_dot(owner, project, issue): return '"' + owner + "/" + project + "#" + issue + '"[label="' + str(issue) + '"]'
+def pp_dot(owner, project, issue): return  owner + "/" + project + "#" + issue 
 
 def query_all(owner, project,issue):
-    print "----------Extracting discussion on ", pp_issue(owner,project,issue)
+    print "----------Extracting discussion on ", pp_dot(owner,project,issue)
     csvw = csv.writer(open("samples/repo_" + owner + "_" + project + "_issue" + issue + ".csv", "wb"));
     fields = ["rectype", "issueid", "project_owner",
                      "project_name", "actor",
                      "time", "text", "action", "title", "provenance"]
-    feature_tags = ["plus_1", "urls", "issues", "userref"]
+    feature_tags = ["plus_1", "urls", "issues", "userref", "code"]
     
     csvw.writerow(tuple(fields+feature_tags))
     
@@ -447,16 +534,20 @@ def query_all(owner, project,issue):
         results.extend(get_pull_request_comments(owner, project, issue, iid));
         results.extend(get_pull_request_history(owner, project, issue, iid));
         results.extend(get_pull_request_commit_comments(owner, project, issue, iid));
-        #results.extend(get_pr_related_hour_ga(owner, project, issue, iid));
+        ##results.extend(get_pr_related_hour_ga(owner, project, issue, iid));
 
     for iid in get_issue_ids(owner, project, issue):
         print "Issue id ", iid
         results.extend(get_issue_title(owner, project, issue, iid));
         results.extend(get_issue_events(owner, project, issue, iid));
         results.extend(get_issue_comments(owner, project, issue, iid));
-        #results.extend(get_issue_comments_ga(owner, project, issue, iid));
-        #results.extend(get_issue_title_ga(owner, project, issue, iid));
-        #results.extend(get_issue_related_hour_ga(owner, project, issue, iid));
+        results.extend(get_inbound_issue_comment_references(owner, project, issue, iid))
+        results.extend(get_inbound_issue_title_references(owner, project, issue, iid))
+        results.extend(get_inbound_pull_request_references(owner, project, issue, iid))
+        ##results.extend(get_issue_comments_ga(owner, project, issue, iid));
+        ##results.extend(get_issue_title_ga(owner, project, issue, iid));
+        ##results.extend(get_issue_related_hour_ga(owner, project, issue, iid));
+
 
     epoch = datetime.datetime.fromtimestamp(0).replace(tzinfo=pytz.utc)
     results.sort(key=lambda r: r["time"].replace(tzinfo=pytz.utc) if r["time"] is not None else epoch )
@@ -468,7 +559,12 @@ def query_all(owner, project,issue):
         git_comment_conventions.find_special(features, result["text"])    
         if "issues" in features:
             for i in features["issues"]:
-                otherIssues.add(git_comment_conventions.parse_issue_reference(i, owner, project))
+                i["parts"] = list(i["parts"])
+                i["parts"].append("rev" if result["provenance"] == "issue_crossref" else "")
+                if i["parts"][0] == "%OWNER%": i["parts"][0] = owner
+                if i["parts"][1] == "%PROJECT%": i["parts"][1] = project
+                print "MKLINK: in", owner, project,issue,"with provenance",result["provenance"],"adding", i["parts"]
+                otherIssues.add(tuple(i["parts"]))
         csvw.writerow( tuple([unicode(result[f]).encode("utf-8") for f in fields] + [json.dumps(features.get(k,"")) for k in feature_tags]))
     print "--->Issues referenced: ", otherIssues
     return otherIssues
@@ -481,14 +577,25 @@ if __name__=="__main__":
     owner = sys.argv[1];
     project = sys.argv[2];
     issue = sys.argv[3];
-    todoIssues = set([(owner, project, issue)])
+    todoIssues = set([(owner, project, issue, "")])
     doneIssues = set()
+    doti = dotgraph.Graphic()
+    dotp = dotgraph.Graphic()
 
     # Examine each issue, adding any unexamined referenced issues to a set of
     # todo items, and eventually get around to the closure of all of these.
     while len(todoIssues) > 0:
-       (owner, project, issue) = todoIssues.pop()
-       relatedIssues = query_all(owner, project,issue)
-       todoIssues = todoIssues | relatedIssues
-       doneIssues = doneIssues | set([(owner, project, issue)])
+       print "]]]]]Stack now contains " + str(len(todoIssues)) + " issues to include"
+       (thisowner, thisproject, thisissue, rev) = todoIssues.pop()
+       if (thisowner == owner and thisproject == project):
+           relatedIssues = query_all(thisowner, thisproject,thisissue)
+           for r in relatedIssues:
+               #import pdb; pdb.set_trace()
+               doti.link(pp_dot(thisowner, thisproject, thisissue), pp_dot(r[0], r[1], r[2]), reverse=(r[3]=="rev"))
+               dotp.link(thisowner + "/" + thisproject, r[0] + "/" + r[1], reverse=(r[3]=="rev"))
+           todoIssues = todoIssues | relatedIssues
+       doneIssues = doneIssues | set([(thisowner, thisproject, thisissue, rev)])
        todoIssues = todoIssues - doneIssues
+
+    doti.draw("samples/repo_" + owner + "_" + project + ".i.dot")
+    dotp.draw("samples/repo_" + owner + "_" + project + ".p.dot")

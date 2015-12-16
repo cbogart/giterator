@@ -13,9 +13,12 @@ signal(SIGPIPE, SIG_DFL)
 csvwriter = csv.writer(sys.stdout)
 
 for line in sys.stdin:
-    ch = json.loads(line)
     try:
+       ch = json.loads(line)
        csvwriter.writerow([v.encode('utf8') if isinstance(v,unicode) else v for v in ch])
     except UnicodeEncodeError, uee:
        sys.stderr.write( str(len(line)) + "//" + line + "//" + str(uee))
+       raise uee
+    except ValueError, ve:
+       sys.stderr.write(line, ve)
        raise uee

@@ -17,5 +17,5 @@ try:
     for ch in read_ga.scanner(fromdate, todate):
         print json.dumps(ch)
 except IOError, e:
-    print e
+    sys.stderr.write(str( e))
     pass

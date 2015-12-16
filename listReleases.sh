@@ -1,0 +1,1 @@
+python scan.py 2015-01-01 2015-09-30 | python filter.py type ReleaseEvent | python paths.py repo.name payload.release.tag_name payload.release.published_at actor.login | python json2csv.py > releases2015.csv

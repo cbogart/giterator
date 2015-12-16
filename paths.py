@@ -23,10 +23,10 @@ def enlist(chunk, parsers):
     return res
         
 for line in sys.stdin:
-    ch = json.loads(line)
     try:
+        ch = json.loads(line)
         outp = enlist(ch, parsers)
         print json.dumps(outp)
     except Exception, e:
-        print e
-        quit()
+        sys.stderr.write("Skipping: ", line)
+        sys.stderr.write(e)
